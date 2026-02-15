@@ -38,6 +38,7 @@ export default function VerifyScreen() {
   const [geoData, setGeoData] = useState<GeoData | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [verified, setVerified] = useState(false);
+  const [detectedObjects, setDetectedObjects] = useState<string[]>([]);
   const [verificationResult, setVerificationResult] = useState<string>('');
 
   async function pickImage() {
@@ -125,44 +126,48 @@ export default function VerifyScreen() {
     setVerifying(true);
 
     try {
-      // 1. Prepare the image file for uploading
       const filename = imageUri.split('/').pop() || 'photo.jpg';
-      const match = /\.(\w+)$/.exec(filename);
-      const type = match ? `image/${match[1]}` : `image/jpeg`;
-
       const formData = new FormData();
-      // TypeScript requires this 'as any' hack for React Native FormData image uploads
-      formData.append('file', {
-        uri: imageUri,
-        name: filename,
-        type: type,
-      } as any);
 
-      // (Optional) Send the location data to the backend for the "Velocity Check"
+      // --- CRITICAL FIX FOR EXPO WEB ---
+      if (Platform.OS === 'web') {
+        // Fetch the local blob URL created by Expo ImagePicker and convert to an actual File
+        const response = await fetch(imageUri);
+        const blob = await response.blob();
+        formData.append('file', blob, filename);
+      } else {
+        // Standard React Native approach for iOS/Android
+        const match = /\.(\w+)$/.exec(filename);
+        const type = match ? `image/${match[1]}` : `image/jpeg`;
+        formData.append('file', {
+          uri: imageUri,
+          name: filename,
+          type: type,
+        } as any);
+      }
+
       if (geoData) {
         formData.append('latitude', geoData.latitude.toString());
         formData.append('longitude', geoData.longitude.toString());
       }
 
-      // 2. Send to your Python Machine Learning Backend
-      // IMPORTANT: Replace '192.168.X.X' with your computer's actual IPv4 address!
-      const BACKEND_URL = 'http://192.168.X.X:8000/verify-action'; 
+      // Since you are testing in Edge on the same computer:
+      const BACKEND_URL = 'http://localhost:8000/verify-action'; 
       
       const response = await fetch(BACKEND_URL, {
         method: 'POST',
         body: formData,
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+        // ABSOLUTELY NO HEADERS HERE! Let the browser handle the boundaries.
       });
 
       const data = await response.json();
 
-      // 3. Handle the AI's response
-      if (data.status === 'verified') {
+    if (data.status === 'verified') {
         setVerified(true);
-        // Display the actual confidence score from the AI
-        setVerificationResult(`Image verified successfully! (AI Confidence: ${(data.confidence * 100).toFixed(1)}%). The photo contains valid geotag data and matches the required environmental action.`);
+        // Save the labels from the AI response
+        setDetectedObjects(data.labels_detected || []); 
+        
+        setVerificationResult(`Verified! (AI Confidence: ${(data.confidence * 100).toFixed(1)}%). Photo matches the required environmental action.`);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } else {
         setVerified(false);
@@ -172,7 +177,7 @@ export default function VerifyScreen() {
 
     } catch (error) {
       console.error('Upload error:', error);
-      alert('Failed to connect to the AI server. Is the Python backend running?');
+      alert('Failed to connect to the AI server. Check your terminal logs.');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setVerifying(false);
@@ -301,6 +306,17 @@ export default function VerifyScreen() {
                       <Text style={styles.resultTitle}>Verified</Text>
                     </View>
                     <Text style={styles.resultText}>{verificationResult}</Text>
+                    {detectedObjects.length > 0 && (
+  <View style={{ marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+    {detectedObjects.map((obj, index) => (
+      <View key={index} style={{ backgroundColor: '#C8E6C9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+        <Text style={{ fontSize: 12, color: '#2E7D32', fontFamily: 'Poppins_600SemiBold' }}>
+          # {obj.replace('_', ' ')}
+        </Text>
+      </View>
+    ))}
+  </View>
+)}
                   </View>
 
                   <Text style={styles.sectionTitle}>Contact Organizations</Text>
