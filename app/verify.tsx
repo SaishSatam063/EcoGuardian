@@ -1,23 +1,23 @@
+import Colors from '@/constants/colors';
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
+import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Location from 'expo-location';
+import { router } from 'expo-router';
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  Pressable,
-  StyleSheet,
-  Platform,
   ActivityIndicator,
   Linking,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
-import { router } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons, MaterialCommunityIcons, Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
-import * as ImagePicker from 'expo-image-picker';
-import * as Location from 'expo-location';
-import { Image } from 'expo-image';
-import Colors from '@/constants/colors';
 
 interface GeoData {
   latitude: number;
@@ -73,7 +73,7 @@ export default function VerifyScreen() {
             address: addr,
           });
         } catch {
-          setGeoData(null);
+          setGeoData(null); 
         }
       }
     }
@@ -124,14 +124,60 @@ export default function VerifyScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     setVerifying(true);
 
-    await new Promise((r) => setTimeout(r, 2500));
+    try {
+      // 1. Prepare the image file for uploading
+      const filename = imageUri.split('/').pop() || 'photo.jpg';
+      const match = /\.(\w+)$/.exec(filename);
+      const type = match ? `image/${match[1]}` : `image/jpeg`;
 
-    setVerified(true);
-    setVerificationResult('Image verified as an authentic environmental issue. The photo contains valid geotag data and shows legitimate environmental concerns requiring attention.');
-    setVerifying(false);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const formData = new FormData();
+      // TypeScript requires this 'as any' hack for React Native FormData image uploads
+      formData.append('file', {
+        uri: imageUri,
+        name: filename,
+        type: type,
+      } as any);
+
+      // (Optional) Send the location data to the backend for the "Velocity Check"
+      if (geoData) {
+        formData.append('latitude', geoData.latitude.toString());
+        formData.append('longitude', geoData.longitude.toString());
+      }
+
+      // 2. Send to your Python Machine Learning Backend
+      // IMPORTANT: Replace '192.168.X.X' with your computer's actual IPv4 address!
+      const BACKEND_URL = 'http://192.168.X.X:8000/verify-action'; 
+      
+      const response = await fetch(BACKEND_URL, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      const data = await response.json();
+
+      // 3. Handle the AI's response
+      if (data.status === 'verified') {
+        setVerified(true);
+        // Display the actual confidence score from the AI
+        setVerificationResult(`Image verified successfully! (AI Confidence: ${(data.confidence * 100).toFixed(1)}%). The photo contains valid geotag data and matches the required environmental action.`);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else {
+        setVerified(false);
+        alert(`Verification Failed: ${data.reason}`);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      }
+
+    } catch (error) {
+      console.error('Upload error:', error);
+      alert('Failed to connect to the AI server. Is the Python backend running?');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setVerifying(false);
+    }
   }
-
   const webTopInset = Platform.OS === 'web' ? 67 : 0;
   const webBottomInset = Platform.OS === 'web' ? 34 : 0;
 
