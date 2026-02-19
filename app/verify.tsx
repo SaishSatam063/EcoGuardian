@@ -1,14 +1,15 @@
 import Colors from '@/constants/colors';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
 import React, { useState } from 'react';
+
 import {
   ActivityIndicator,
+  Image,
   Linking,
   Platform,
   Pressable,
@@ -77,6 +78,11 @@ export default function VerifyScreen() {
           setGeoData(null); 
         }
       }
+      const { status: libraryStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+if (libraryStatus !== 'granted') {
+  alert('Permission to access gallery is required!');
+  return;
+}
     }
   }
 
@@ -252,14 +258,19 @@ if (geoData) {
             </View>
           ) : (
             <>
-              <View style={styles.imagePreview}>
-  <Image 
-    source={{ uri: imageUri }} 
-    style={styles.previewImage} 
-    contentFit="cover" 
-  />
-  {/* Add a placeholder if URI is somehow null or empty */}
-  {!imageUri && <ActivityIndicator style={StyleSheet.absoluteFill} />}
+          <View style={styles.imagePreview}>
+  {imageUri ? (
+    <Image 
+      source={{ uri: imageUri }} 
+      style={styles.previewImage} 
+      resizeMode="cover" // Use resizeMode for standard Image component
+      onLoadStart={() => console.log("Loading started...")}
+      onLoad={() => console.log("Loading success!")}
+      onError={(e) => console.log("Loading error:", e.nativeEvent.error)}
+    />
+  ) : (
+    <ActivityIndicator size="large" color={Colors.primary} />
+  )}
 </View>
 
               {geoData && (
@@ -469,18 +480,20 @@ const styles = StyleSheet.create({
     color: Colors.primary,
   },
 imagePreview: {
-    width: '100%',
-    height: 300, // Explicit height is required on native
-    borderRadius: 16,
-    overflow: 'hidden',
-    marginBottom: 16,
-    backgroundColor: '#E0E0E0', // Helps see the box if image fails
-    position: 'relative',
-  },
-  previewImage: {
-    width: '100%',
-    height: '100%', // Ensure the image fills the 300px container
-  },
+  width: '100%',
+  height: 350, // Increased height for better visibility
+  borderRadius: 16,
+  backgroundColor: '#F5F5F5', // Light gray so you can see the box
+  justifyContent: 'center',
+  alignItems: 'center',
+  overflow: 'hidden',
+  borderWidth: 1,
+  borderColor: '#DDD',
+},
+previewImage: {
+  width: '100%',
+  height: '100%',
+},
  
   changeImageBtn: {
     position: 'absolute',
