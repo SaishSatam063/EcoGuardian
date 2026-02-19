@@ -128,7 +128,14 @@ export default function VerifyScreen() {
     try {
       const filename = imageUri.split('/').pop() || 'photo.jpg';
       const formData = new FormData();
+      const deviceTimestamp = new Date().toISOString(); // Captures "Now"
 
+formData.append('device_timestamp', deviceTimestamp); //
+
+if (geoData) {
+  formData.append('latitude', geoData.latitude.toString());
+  formData.append('longitude', geoData.longitude.toString());
+}
       // --- CRITICAL FIX FOR EXPO WEB ---
       if (Platform.OS === 'web') {
         // Fetch the local blob URL created by Expo ImagePicker and convert to an actual File
@@ -152,7 +159,7 @@ export default function VerifyScreen() {
       }
 
       // Since you are testing in Edge on the same computer:
-      const BACKEND_URL = 'http://localhost:8000/verify-action'; 
+      const BACKEND_URL = 'http://10.203.101.169:8000/verify-action'; 
       
       const response = await fetch(BACKEND_URL, {
         method: 'POST',
@@ -246,14 +253,14 @@ export default function VerifyScreen() {
           ) : (
             <>
               <View style={styles.imagePreview}>
-                <Image source={{ uri: imageUri }} style={styles.previewImage} contentFit="cover" />
-                <Pressable
-                  style={styles.changeImageBtn}
-                  onPress={() => { setImageUri(null); setVerified(false); setGeoData(null); }}
-                >
-                  <Ionicons name="refresh" size={18} color={Colors.white} />
-                </Pressable>
-              </View>
+  <Image 
+    source={{ uri: imageUri }} 
+    style={styles.previewImage} 
+    contentFit="cover" 
+  />
+  {/* Add a placeholder if URI is somehow null or empty */}
+  {!imageUri && <ActivityIndicator style={StyleSheet.absoluteFill} />}
+</View>
 
               {geoData && (
                 <View style={styles.geoCard}>
@@ -318,7 +325,6 @@ export default function VerifyScreen() {
   </View>
 )}
                   </View>
-
                   <Text style={styles.sectionTitle}>Contact Organizations</Text>
                   <Text style={styles.sectionSub}>Reach out to the relevant authority for your reported issue</Text>
 
@@ -462,17 +468,20 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_600SemiBold',
     color: Colors.primary,
   },
-  imagePreview: {
+imagePreview: {
+    width: '100%',
+    height: 300, // Explicit height is required on native
     borderRadius: 16,
     overflow: 'hidden',
     marginBottom: 16,
+    backgroundColor: '#E0E0E0', // Helps see the box if image fails
     position: 'relative',
   },
   previewImage: {
     width: '100%',
-    height: 240,
-    borderRadius: 16,
+    height: '100%', // Ensure the image fills the 300px container
   },
+ 
   changeImageBtn: {
     position: 'absolute',
     top: 12,

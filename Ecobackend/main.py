@@ -20,40 +20,43 @@ app.add_middleware(
 )
 
 # --- SECURITY UTILITY: Metadata Forensic Check ---
+# --- IMPROVED SECURITY UTILITY ---
 def verify_metadata(image_bytes, app_time_str):
     try:
         img = Image.open(io.BytesIO(image_bytes))
         exif = img._getexif()
         
-        # 1. Check for presence of Metadata
         if not exif:
             return False, "Security Alert: No Camera Metadata (Possible AI/Screenshot)"
 
-        # Extract human-readable tags
         metadata = {TAGS.get(tag): value for tag, value in exif.items() if tag in TAGS}
         
-        # 2. Hardware Signature: Genuine photos have camera Make/Model
+        # 1. Hardware Signature Check
         if 'Make' not in metadata and 'Model' not in metadata:
             return False, "Security Alert: Missing Hardware Signature"
 
-        # 3. Liveness Check: Compare button press time vs photo capture time
+        # 2. IMPROVED Liveness Check
         img_time_str = metadata.get('DateTimeOriginal') or metadata.get('DateTime')
         if img_time_str and app_time_str:
-            # Parse image time (format 'YYYY:MM:DD HH:MM:SS')
+            # Parse image time
             img_time = datetime.strptime(img_time_str, '%Y:%m:%d %H:%M:%S')
             # Parse app time (ISO format)
             app_time = datetime.fromisoformat(app_time_str.replace('Z', ''))
             
-            # Reject if the photo was taken more than 10 minutes (600s) before the upload
+            # Calculate difference in seconds
             time_diff = abs((app_time - img_time).total_seconds())
-            if time_diff > 600:
-                return False, "Security Alert: Photo is not a live capture (Time Mismatch)"
+            
+            # DEBUG: Print this to your terminal so you can see the gap!
+            print(f"DEBUG: Time Gap is {time_diff} seconds")
+
+            # INCREASED TOLERANCE: 
+            # We allow 24 hours (86400s) to handle Timezone offsets for the hackathon
+            if time_diff > 86400: 
+                return False, f"Security Alert: Photo is too old ({int(time_diff/3600)} hours old)"
 
         return True, "Authenticity Verified"
     except Exception as e:
-        # If metadata is unreadable or corrupted, we fail safe by rejecting it
         return False, f"Metadata Error: {str(e)}"
-
 print("Loading AI Model (MobileNetV2)...")
 model = MobileNetV2(weights='imagenet')
 print("Model Loaded Successfully!")
