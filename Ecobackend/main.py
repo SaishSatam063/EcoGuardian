@@ -7,6 +7,8 @@ from PIL import Image
 from PIL.ExifTags import TAGS
 from datetime import datetime
 import io
+import sqlite3
+import imagehash  # Added for duplicate detection
 
 app = FastAPI()
 
@@ -19,7 +21,19 @@ app.add_middleware(
     allow_methods=["*"],
 )
 
-# --- SECURITY UTILITY: Metadata Forensic Check ---
+# --- DATABASE SETUP ---
+def init_db():
+    conn = sqlite3.connect('eco_guardian.db')
+    c = conn.cursor()
+    # Create table if it doesn't exist. image_hash is the Primary Key to prevent duplicates.
+    c.execute('''CREATE TABLE IF NOT EXISTS verified_uploads
+                 (image_hash TEXT PRIMARY KEY, latitude REAL, longitude REAL, timestamp TEXT)''')
+    conn.commit()
+    conn.close()
+
+# Initialize the database when the script starts
+init_db()
+
 # --- IMPROVED SECURITY UTILITY ---
 def verify_metadata(image_bytes, app_time_str):
     try:
@@ -57,6 +71,7 @@ def verify_metadata(image_bytes, app_time_str):
         return True, "Authenticity Verified"
     except Exception as e:
         return False, f"Metadata Error: {str(e)}"
+
 print("Loading AI Model (MobileNetV2)...")
 model = MobileNetV2(weights='imagenet')
 print("Model Loaded Successfully!")
@@ -84,9 +99,28 @@ async def verify_action(
             }
         # -------------------------------------------------------------
 
-        # 3. Proceed to AI Classification if security check passes
-        img = Image.open(io.BytesIO(contents))
-        img = img.resize((224, 224))
+        # 3. --- STEP 3: DATABASE DUPLICATE CHECK ---
+        img_for_db = Image.open(io.BytesIO(contents))
+        # Create a unique string based on the image pixels
+        img_fingerprint = str(imagehash.average_hash(img_for_db))
+
+        conn = sqlite3.connect('eco_guardian.db')
+        c = conn.cursor()
+        
+        # Check if this fingerprint already exists in our records
+        c.execute("SELECT * FROM verified_uploads WHERE image_hash=?", (img_fingerprint,))
+        if c.fetchone():
+            conn.close()
+            print(f"--- REJECTED: Duplicate Image Detected ({img_fingerprint}) ---")
+            return {
+                "status": "rejected",
+                "reason": "Duplicate submission detected! This photo has already been verified."
+            }
+        # -------------------------------------------------------------
+
+        # 4. Proceed to AI Classification if security check passes
+        # Use the image we already opened for hashing to save resources
+        img = img_for_db.resize((224, 224))
         if img.mode != "RGB":
             img = img.convert("RGB")
 
@@ -94,7 +128,7 @@ async def verify_action(
         img_array = np.expand_dims(img_array, axis=0)
         img_array = preprocess_input(img_array)
 
-        # 4. AI Prediction
+        # AI Prediction
         predictions = model.predict(img_array)
         results = decode_predictions(predictions, top=5)[0]
         labels = [res[1].lower() for res in results]
@@ -105,6 +139,14 @@ async def verify_action(
         matched_keywords = [word for word in ECO_KEYWORDS if any(word in label for label in labels)]
 
         if matched_keywords:
+            # 5. --- STEP 5: SAVE TO DATABASE ---
+            # If everything passes, log the action permanently
+            c.execute("INSERT INTO verified_uploads VALUES (?, ?, ?, ?)", 
+                      (img_fingerprint, latitude, longitude, datetime.now().isoformat()))
+            conn.commit()
+            conn.close()
+            print(f"--- SAVED TO DB: {img_fingerprint} ---")
+
             highest_confidence = max([float(res[2]) for res in results if any(word in res[1].lower() for word in ECO_KEYWORDS)])
             return {
                 "status": "verified",
@@ -113,6 +155,7 @@ async def verify_action(
                 "location": {"lat": latitude, "lon": longitude}
             }
         else:
+            conn.close() # Always close the connection even if rejected
             return {
                 "status": "rejected",
                 "reason": f"No environmental elements detected. AI saw: {', '.join(labels)}"
