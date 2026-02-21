@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -180,13 +179,14 @@ export default function DashboardScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
       >
         <LinearGradient
-          colors={[Colors.primaryDark, Colors.primary, Colors.primaryLight]}
+          colors={['#0F2027', '#1FA2FF', '#2C5364']}
           style={[styles.headerGradient, { paddingTop: insets.top + webTopInset + 16 }]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
         >
           <View style={styles.decorDot1} />
           <View style={styles.decorDot2} />
+          
 
           <View style={styles.headerRow}>
             <View style={styles.headerLeft}>
