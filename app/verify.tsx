@@ -165,7 +165,7 @@ if (geoData) {
       }
 
       // Since you are testing in Edge on the same computer:
-      const BACKEND_URL = 'http://10.203.101.169:8000/verify-action'; 
+      const BACKEND_URL = 'http://192.168.137.116:8000/verify-action'; 
       
       const response = await fetch(BACKEND_URL, {
         method: 'POST',

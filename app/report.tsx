@@ -1,24 +1,26 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  TextInput,
-  Pressable,
-  StyleSheet,
-  Platform,
-  KeyboardAvoidingView,
-  ActivityIndicator,
-} from 'react-native';
-import { router } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
-import * as Location from 'expo-location';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/context/AuthContext';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Location from 'expo-location';
+import { router } from 'expo-router';
+import React, { useState } from 'react';
+import {
+  ActivityIndicator,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const CATEGORIES = [
   { id: 'waste', label: 'Waste Segregation', icon: 'trash-outline' as const },
@@ -32,14 +34,37 @@ const CATEGORIES = [
 export default function ReportScreen() {
   const insets = useSafeAreaInsets();
   const { user, updateUser } = useAuth();
+  
+  // State
   const [category, setCategory] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
   const [severity, setSeverity] = useState<'low' | 'medium' | 'high'>('medium');
+  const [imageUri, setImageUri] = useState<string | null>(null); // New state for Evidence
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [fetchingLoc, setFetchingLoc] = useState(false);
+
+  // Take photo for evidence
+  async function pickImage() {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      alert('Sorry, we need camera permissions to verify this report!');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+      exif: true, // Crucial for backend metadata verification
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setImageUri(result.assets[0].uri);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+  }
 
   async function fetchLocation() {
     setFetchingLoc(true);
@@ -65,47 +90,83 @@ export default function ReportScreen() {
   }
 
   async function handleSubmit() {
-    if (!category || !title.trim() || !description.trim()) return;
+    // Require imageUri along with other fields
+    if (!category || !title.trim() || !description.trim() || !imageUri) return;
 
     setSubmitting(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
 
-    await new Promise((r) => setTimeout(r, 1500));
-
-    const cashbackAmounts: Record<string, number> = {
-      waste: 50, tree: 100, water: 75, air: 60, energy: 45, other: 30,
-    };
-    const cashback = cashbackAmounts[category] || 50;
-
-    const report = {
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-      category: CATEGORIES.find((c) => c.id === category)?.label || category,
-      title: title.trim(),
-      description: description.trim(),
-      location: location.trim(),
-      severity,
-      status: 'verified' as const,
-      cashback,
-      date: new Date().toISOString(),
-    };
-
     try {
-      const stored = await AsyncStorage.getItem('ecotrack_reports');
-      const reports = stored ? JSON.parse(stored) : [];
-      reports.unshift(report);
-      await AsyncStorage.setItem('ecotrack_reports', JSON.stringify(reports));
+      // 1. Prepare data for Python Backend
+      const formData = new FormData();
+      formData.append('file', {
+        uri: imageUri,
+        name: 'evidence.jpg',
+        type: 'image/jpeg',
+      } as any);
+      
+      // Match the fields expected by FastAPI
+      formData.append('device_timestamp', new Date().toISOString()); 
+      // If you have actual lat/lon from Location, append them here too
 
-      if (user) {
-        await updateUser({
-          totalReports: (user.totalReports || 0) + 1,
-          totalCashback: (user.totalCashback || 0) + cashback,
-        });
+      // 2. Send to backend AI for Verification
+      // REPLACE <YOUR_LAPTOP_IP> WITH YOUR ACTUAL IPv4 ADDRESS (e.g., 192.168.1.5)
+      const response = await fetch('http://192.168.137.116:8000/verify-action', {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      const result = await response.json();
+
+      if (result.status === 'verified') {
+        // AI VERIFICATION SUCCESS!
+        const cashbackAmounts: Record<string, number> = {
+          waste: 50, tree: 100, water: 75, air: 60, energy: 45, other: 30,
+        };
+        const cashback = cashbackAmounts[category] || 50;
+
+        const report = {
+          id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+          category: CATEGORIES.find((c) => c.id === category)?.label || category,
+          title: title.trim(),
+          description: description.trim(),
+          location: location.trim(),
+          severity,
+          status: 'verified' as const,
+          cashback,
+          date: new Date().toISOString(),
+          ai_labels: result.labels_detected, // Store what the AI saw
+        };
+
+        // Save to local storage for UI history
+        const stored = await AsyncStorage.getItem('ecotrack_reports');
+        const reports = stored ? JSON.parse(stored) : [];
+        reports.unshift(report);
+        await AsyncStorage.setItem('ecotrack_reports', JSON.stringify(reports));
+
+        if (user) {
+          await updateUser({
+            totalReports: (user.totalReports || 0) + 1,
+            totalCashback: (user.totalCashback || 0) + cashback,
+          });
+        }
+        
+        setSubmitted(true);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else {
+        // AI REJECTED THE IMAGE (e.g., No environmental elements, duplicate, etc.)
+        alert(`Verification Failed: ${result.reason}`);
       }
-    } catch {}
 
-    setSubmitting(false);
-    setSubmitted(true);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      console.error("Upload error:", error);
+      alert("Failed to connect to the verification server. Check your backend IP!");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   const webTopInset = Platform.OS === 'web' ? 67 : 0;
@@ -118,16 +179,15 @@ export default function ReportScreen() {
           <View style={styles.successIcon}>
             <Ionicons name="checkmark-circle" size={64} color={Colors.success} />
           </View>
-          <Text style={styles.successTitle}>Report Submitted!</Text>
+          <Text style={styles.successTitle}>Report Verified!</Text>
           <Text style={styles.successText}>
-            Your environmental issue report has been submitted and verified. You will receive cashback
-            rewards once the problem is resolved.
+            Our AI has verified your evidence. You will receive your cashback rewards and certificate shortly!
           </Text>
 
           <View style={styles.rewardPreview}>
             <MaterialCommunityIcons name="gift" size={24} color={Colors.gold} />
             <View style={styles.rewardPreviewInfo}>
-              <Text style={styles.rewardPreviewTitle}>Pending Reward</Text>
+              <Text style={styles.rewardPreviewTitle}>Reward Secured</Text>
               <Text style={styles.rewardPreviewAmount}>Certificate + Cashback Points</Text>
             </View>
           </View>
@@ -229,10 +289,27 @@ export default function ReportScreen() {
               textAlignVertical="top"
             />
 
+            {/* --- NEW EVIDENCE UPLOAD SECTION --- */}
+            <Text style={styles.sectionTitle}>Upload Evidence (Required)</Text>
+            <Pressable 
+              style={styles.imageUploadBtn} 
+              onPress={pickImage}
+            >
+              {imageUri ? (
+                <Image source={{ uri: imageUri }} style={styles.uploadedImage} />
+              ) : (
+                <View style={styles.uploadPlaceholder}>
+                  <Ionicons name="camera" size={36} color={Colors.primary} />
+                  <Text style={styles.uploadText}>Tap to capture live photo</Text>
+                  <Text style={styles.uploadSubtext}>Must be a real-time capture for AI verification</Text>
+                </View>
+              )}
+            </Pressable>
+
             <Text style={styles.sectionTitle}>Location</Text>
             <View style={styles.locationRow}>
               <TextInput
-                style={[styles.textInput, { flex: 1 }]}
+                style={[styles.textInput, { flex: 1, marginBottom: 0 }]} // Removed bottom margin to align with row
                 placeholder="Enter location"
                 placeholderTextColor={Colors.textMuted}
                 value={location}
@@ -251,7 +328,7 @@ export default function ReportScreen() {
               </Pressable>
             </View>
 
-            <Text style={styles.sectionTitle}>Severity</Text>
+            <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Severity</Text>
             <View style={styles.severityRow}>
               {(['low', 'medium', 'high'] as const).map((s) => (
                 <Pressable
@@ -278,14 +355,15 @@ export default function ReportScreen() {
             <Pressable
               style={({ pressed }) => [
                 styles.submitBtn,
-                (!category || !title.trim() || !description.trim()) && styles.submitBtnDisabled,
+                // Disable if image is missing
+                (!category || !title.trim() || !description.trim() || !imageUri) && styles.submitBtnDisabled,
                 pressed && { transform: [{ scale: 0.97 }] },
               ]}
               onPress={handleSubmit}
-              disabled={submitting || !category || !title.trim() || !description.trim()}
+              disabled={submitting || !category || !title.trim() || !description.trim() || !imageUri}
             >
               <LinearGradient
-                colors={(!category || !title.trim() || !description.trim())
+                colors={(!category || !title.trim() || !description.trim() || !imageUri)
                   ? ['#ccc', '#bbb']
                   : [Colors.primary, Colors.primaryLight]}
                 style={styles.submitBtnGradient}
@@ -297,7 +375,7 @@ export default function ReportScreen() {
                 ) : (
                   <>
                     <Ionicons name="send" size={20} color={Colors.white} />
-                    <Text style={styles.submitBtnText}>Submit Report</Text>
+                    <Text style={styles.submitBtnText}>Submit & Verify</Text>
                   </>
                 )}
               </LinearGradient>
@@ -387,6 +465,40 @@ const styles = StyleSheet.create({
     minHeight: 120,
     textAlignVertical: 'top',
   },
+  /* --- NEW STYLES FOR IMAGE UPLOAD --- */
+  imageUploadBtn: {
+    backgroundColor: Colors.white,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: Colors.primary,
+    borderStyle: 'dashed',
+    height: 160,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  uploadPlaceholder: {
+    alignItems: 'center',
+  },
+  uploadText: {
+    marginTop: 8,
+    fontSize: 14,
+    fontFamily: 'Poppins_600SemiBold',
+    color: Colors.primary,
+  },
+  uploadSubtext: {
+    marginTop: 4,
+    fontSize: 12,
+    fontFamily: 'Poppins_400Regular',
+    color: Colors.textMuted,
+  },
+  uploadedImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  /* ----------------------------------- */
   locationRow: {
     flexDirection: 'row',
     alignItems: 'center',
